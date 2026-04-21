@@ -2167,6 +2167,7 @@ export default {
       allPlatforms: '全部平台',
       allTypes: '全部类型',
       allStatus: '全部状态',
+      allStatusCodes: '全部状态码',
       allGroups: '全部分组',
       ungroupedGroup: '未分配分组',
       oauthType: 'OAuth',
@@ -2285,6 +2286,9 @@ export default {
       apiKey: 'API Key',
       deleteConfirm: "确定要删除账号 '{name}' 吗？此操作无法撤销。",
       failedToClearRateLimit: '清除速率限制失败',
+      clearByStatusCodeAction: '清理 {code}',
+      clearByStatusCodeConfirm: '确定要清理当前筛选条件下状态码为 {code} 的账号状态吗？',
+      clearByStatusCodeSuccess: '已成功清理 {count} 个状态码为 {code} 的账号',
       platforms: {
         claude: 'Claude',
         openai: 'OpenAI',

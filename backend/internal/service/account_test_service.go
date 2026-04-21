@@ -296,7 +296,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 
 		// 403 表示账号被上游封禁，标记为 error 状态
 		if resp.StatusCode == http.StatusForbidden {
-			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
+			s.markAccountTestError(ctx, account.ID, errMsg)
 		}
 
 		return s.sendErrorAndEnd(c, errMsg)
@@ -522,7 +522,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		// 401 Unauthorized: 标记账号为永久错误
 		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
 			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
-			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
+			s.markAccountTestError(ctx, account.ID, errMsg)
 		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
@@ -1040,6 +1040,18 @@ func (s *AccountTestService) sendErrorAndEnd(c *gin.Context, errorMsg string) er
 	log.Printf("Account test error: %s", errorMsg)
 	s.sendEvent(c, TestEvent{Type: "error", Error: errorMsg})
 	return fmt.Errorf("%s", errorMsg)
+}
+
+// markAccountTestError persists a terminal test error and clears stale runtime throttling markers.
+func (s *AccountTestService) markAccountTestError(ctx context.Context, accountID int64, errorMsg string) {
+	if s.accountRepo == nil {
+		return
+	}
+	_ = s.accountRepo.ClearRateLimit(ctx, accountID)
+	_ = s.accountRepo.ClearAntigravityQuotaScopes(ctx, accountID)
+	_ = s.accountRepo.ClearModelRateLimits(ctx, accountID)
+	_ = s.accountRepo.ClearTempUnschedulable(ctx, accountID)
+	_ = s.accountRepo.SetError(ctx, accountID, errorMsg)
 }
 
 // RunTestBackground executes an account test in-memory (no real HTTP client),

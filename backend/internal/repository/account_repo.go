@@ -457,10 +457,23 @@ func (r *accountRepository) Delete(ctx context.Context, id int64) error {
 }
 
 func (r *accountRepository) List(ctx context.Context, params pagination.PaginationParams) ([]service.Account, *pagination.PaginationResult, error) {
-	return r.ListWithFilters(ctx, params, "", "", "", "", 0, "")
+	return r.ListWithFilters(ctx, params, "", "", "", "", "", 0, "")
 }
 
-func (r *accountRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string) ([]service.Account, *pagination.PaginationResult, error) {
+/**
+ * ListWithFilters returns paginated accounts filtered by admin query fields
+ * @param ctx Request context
+ * @param params Pagination and sort parameters
+ * @param platform Platform filter
+ * @param accountType Account type filter
+ * @param status Runtime status filter
+ * @param statusCode Current status code filter
+ * @param search Account name search keyword
+ * @param groupID Group filter ID
+ * @param privacyMode Privacy mode filter
+ * @returns Filtered accounts and pagination metadata
+ */
+func (r *accountRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, statusCode, search string, groupID int64, privacyMode string) ([]service.Account, *pagination.PaginationResult, error) {
 	q := r.client.Account.Query()
 
 	if platform != "" {
@@ -532,6 +545,9 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 	}
 	if search != "" {
 		q = q.Where(dbaccount.NameContainsFold(search))
+	}
+	if statusCode != "" {
+		q = q.Where(accountStatusCodePredicate(statusCode))
 	}
 	if groupID == service.AccountListGroupUngrouped {
 		q = q.Where(dbaccount.Not(dbaccount.HasAccountGroups()))
@@ -1602,6 +1618,66 @@ func tempUnschedulablePredicate() dbpredicate.Account {
 			entsql.LTE(col, entsql.Expr("NOW()")),
 		))
 	})
+}
+
+// accountStatusCodePredicate matches the current effective account status code.
+// It only inspects active runtime state and current error markers, not historical logs.
+func accountStatusCodePredicate(statusCode string) dbpredicate.Account {
+	code := strings.TrimSpace(statusCode)
+	return dbpredicate.Account(func(s *entsql.Selector) {
+		switch code {
+		case "429":
+			applyActiveRateLikeStatusCodePredicate(s, code, true, false)
+		case "529":
+			applyActiveRateLikeStatusCodePredicate(s, code, false, true)
+		case "400", "401", "402", "403":
+			applyErrorStatusCodePredicate(s, code)
+		default:
+			applyErrorStatusCodePredicate(s, code)
+		}
+	})
+}
+
+// applyActiveRateLikeStatusCodePredicate filters accounts by active runtime rate-like status code.
+func applyActiveRateLikeStatusCodePredicate(selector *entsql.Selector, statusCode string, includeRateLimit bool, includeOverload bool) {
+	runtimePredicates := make([]*entsql.Predicate, 0, 3)
+	if includeRateLimit {
+		runtimePredicates = append(runtimePredicates, entsql.GT(selector.C("rate_limit_reset_at"), entsql.Expr("NOW()")))
+	}
+	if includeOverload {
+		runtimePredicates = append(runtimePredicates, entsql.GT(selector.C("overload_until"), entsql.Expr("NOW()")))
+	}
+	runtimePredicates = append(runtimePredicates, activeTempUnschedStatusCodePredicate(selector, statusCode))
+	selector.Where(entsql.Or(runtimePredicates...))
+}
+
+// applyErrorStatusCodePredicate filters accounts by current auth/business error code markers.
+func applyErrorStatusCodePredicate(selector *entsql.Selector, statusCode string) {
+	selector.Where(entsql.Or(
+		entsql.And(
+			entsql.EQ(selector.C("status"), service.StatusError),
+			errorMessageStatusCodePredicate(selector, statusCode),
+		),
+		activeTempUnschedStatusCodePredicate(selector, statusCode),
+	))
+}
+
+// activeTempUnschedStatusCodePredicate matches active temp-unschedulable states by stored status code.
+func activeTempUnschedStatusCodePredicate(selector *entsql.Selector, statusCode string) *entsql.Predicate {
+	return entsql.And(
+		entsql.Not(entsql.IsNull(selector.C("temp_unschedulable_until"))),
+		entsql.GT(selector.C("temp_unschedulable_until"), entsql.Expr("NOW()")),
+		entsql.ExprP("COALESCE(NULLIF(temp_unschedulable_reason, '')::jsonb ->> 'status_code', '') = ?", statusCode),
+	)
+}
+
+// errorMessageStatusCodePredicate matches structured status code markers persisted in account error messages.
+func errorMessageStatusCodePredicate(selector *entsql.Selector, statusCode string) *entsql.Predicate {
+	return entsql.Or(
+		entsql.ExprP("error_message LIKE ?", "%("+statusCode+")%"),
+		entsql.ExprP("error_message LIKE ?", "% "+statusCode+":%"),
+		entsql.ExprP("error_message LIKE ?", "%returned "+statusCode+"%"),
+	)
 }
 
 func notExpiredPredicate(now time.Time) dbpredicate.Account {

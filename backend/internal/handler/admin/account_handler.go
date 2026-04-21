@@ -168,6 +168,19 @@ type AccountWithConcurrency struct {
 
 const accountListGroupUngroupedQueryValue = "ungrouped"
 
+// AccountListFilters describes query filters reused by list-like admin account endpoints.
+type AccountListFilters struct {
+	Platform    string
+	AccountType string
+	Status      string
+	StatusCode  string
+	Search      string
+	PrivacyMode string
+	GroupID     int64
+	SortBy      string
+	SortOrder   string
+}
+
 func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, account *service.Account) AccountWithConcurrency {
 	item := AccountWithConcurrency{
 		Account:            dto.AccountFromService(account),
@@ -212,43 +225,73 @@ func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, ac
 	return item
 }
 
+// parseAccountListGroupFilter normalizes the account group query parameter.
+// It supports a numeric group ID and the special "ungrouped" token.
+func parseAccountListGroupFilter(groupIDStr string) (int64, error) {
+	if groupIDStr == "" {
+		return 0, nil
+	}
+	if groupIDStr == accountListGroupUngroupedQueryValue {
+		return service.AccountListGroupUngrouped, nil
+	}
+
+	groupID, err := strconv.ParseInt(groupIDStr, 10, 64)
+	if err != nil || groupID < 0 {
+		return 0, infraerrors.BadRequest("INVALID_GROUP_FILTER", "invalid group filter")
+	}
+
+	return groupID, nil
+}
+
+// buildAccountListFilters reads and validates shared account list filters from the request.
+func buildAccountListFilters(c *gin.Context) (AccountListFilters, error) {
+	search := strings.TrimSpace(c.Query("search"))
+	if len(search) > 100 {
+		search = search[:100]
+	}
+
+	groupID, err := parseAccountListGroupFilter(c.Query("group"))
+	if err != nil {
+		return AccountListFilters{}, err
+	}
+
+	return AccountListFilters{
+		Platform:    c.Query("platform"),
+		AccountType: c.Query("type"),
+		Status:      c.Query("status"),
+		StatusCode:  strings.TrimSpace(c.Query("status_code")),
+		Search:      search,
+		PrivacyMode: strings.TrimSpace(c.Query("privacy_mode")),
+		GroupID:     groupID,
+		SortBy:      c.DefaultQuery("sort_by", "name"),
+		SortOrder:   c.DefaultQuery("sort_order", "asc"),
+	}, nil
+}
+
 // List handles listing all accounts with pagination
 // GET /api/v1/admin/accounts
 func (h *AccountHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
-	platform := c.Query("platform")
-	accountType := c.Query("type")
-	status := c.Query("status")
-	search := c.Query("search")
-	privacyMode := strings.TrimSpace(c.Query("privacy_mode"))
-	sortBy := c.DefaultQuery("sort_by", "name")
-	sortOrder := c.DefaultQuery("sort_order", "asc")
-	// 标准化和验证 search 参数
-	search = strings.TrimSpace(search)
-	if len(search) > 100 {
-		search = search[:100]
+	filters, err := buildAccountListFilters(c)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
 	}
 	lite := parseBoolQueryWithDefault(c.Query("lite"), false)
-
-	var groupID int64
-	if groupIDStr := c.Query("group"); groupIDStr != "" {
-		if groupIDStr == accountListGroupUngroupedQueryValue {
-			groupID = service.AccountListGroupUngrouped
-		} else {
-			parsedGroupID, parseErr := strconv.ParseInt(groupIDStr, 10, 64)
-			if parseErr != nil {
-				response.ErrorFrom(c, infraerrors.BadRequest("INVALID_GROUP_FILTER", "invalid group filter"))
-				return
-			}
-			if parsedGroupID < 0 {
-				response.ErrorFrom(c, infraerrors.BadRequest("INVALID_GROUP_FILTER", "invalid group filter"))
-				return
-			}
-			groupID = parsedGroupID
-		}
-	}
-
-	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, sortBy, sortOrder)
+	accounts, total, err := h.adminService.ListAccounts(
+		c.Request.Context(),
+		page,
+		pageSize,
+		filters.Platform,
+		filters.AccountType,
+		filters.Status,
+		filters.StatusCode,
+		filters.Search,
+		filters.GroupID,
+		filters.PrivacyMode,
+		filters.SortBy,
+		filters.SortOrder,
+	)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -370,7 +413,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 		result[i] = item
 	}
 
-	etag := buildAccountsListETag(result, total, page, pageSize, platform, accountType, status, search, lite)
+	etag := buildAccountsListETag(result, total, page, pageSize, filters.Platform, filters.AccountType, filters.Status, filters.Search, lite)
 	if etag != "" {
 		c.Header("ETag", etag)
 		c.Header("Vary", "If-None-Match")
@@ -1054,6 +1097,129 @@ func (h *AccountHandler) BatchClearError(c *gin.Context) {
 		"success": successCount,
 		"failed":  failedCount,
 		"errors":  errors,
+	})
+}
+
+// BatchClearStatusCodeRequest describes the payload for clearing accounts by current status code.
+type BatchClearStatusCodeRequest struct {
+	StatusCode int `json:"status_code" binding:"required"`
+	Filters    struct {
+		Platform    string `json:"platform"`
+		AccountType string `json:"type"`
+		Status      string `json:"status"`
+		Search      string `json:"search"`
+		PrivacyMode string `json:"privacy_mode"`
+		Group       string `json:"group"`
+		SortBy      string `json:"sort_by"`
+		SortOrder   string `json:"sort_order"`
+	} `json:"filters"`
+}
+
+// BatchClearByStatusCode clears matching account state according to the selected status code.
+// POST /api/v1/admin/accounts/batch-clear-by-status-code
+func (h *AccountHandler) BatchClearByStatusCode(c *gin.Context) {
+	var req BatchClearStatusCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	if req.StatusCode < 100 || req.StatusCode > 599 {
+		response.BadRequest(c, "status_code must be between 100 and 599")
+		return
+	}
+
+	groupID, err := parseAccountListGroupFilter(strings.TrimSpace(req.Filters.Group))
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	statusCode := strconv.Itoa(req.StatusCode)
+	accounts, _, err := h.adminService.ListAccounts(
+		c.Request.Context(),
+		1,
+		10000,
+		strings.TrimSpace(req.Filters.Platform),
+		strings.TrimSpace(req.Filters.AccountType),
+		strings.TrimSpace(req.Filters.Status),
+		statusCode,
+		strings.TrimSpace(req.Filters.Search),
+		groupID,
+		strings.TrimSpace(req.Filters.PrivacyMode),
+		strings.TrimSpace(req.Filters.SortBy),
+		strings.TrimSpace(req.Filters.SortOrder),
+	)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	targetIDs := make([]int64, 0, len(accounts))
+	for i := range accounts {
+		targetIDs = append(targetIDs, accounts[i].ID)
+	}
+
+	if len(targetIDs) == 0 {
+		response.Success(c, gin.H{
+			"total":   0,
+			"success": 0,
+			"failed":  0,
+			"errors":  []gin.H{},
+		})
+		return
+	}
+
+	ctx := c.Request.Context()
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(10)
+
+	var mu sync.Mutex
+	successCount := 0
+	failedCount := 0
+	errorItems := make([]gin.H, 0)
+
+	for _, id := range targetIDs {
+		accountID := id
+		g.Go(func() error {
+			var clearErr error
+			switch req.StatusCode {
+			case http.StatusTooManyRequests, 529:
+				if h.rateLimitService == nil {
+					clearErr = errors.New("rate limit service unavailable")
+				} else {
+					clearErr = h.rateLimitService.ClearRateLimit(gctx, accountID)
+				}
+			default:
+				_, clearErr = h.adminService.ClearAccountError(gctx, accountID)
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			if clearErr != nil {
+				failedCount++
+				errorItems = append(errorItems, gin.H{
+					"account_id": accountID,
+					"error":      clearErr.Error(),
+				})
+				return nil
+			}
+
+			successCount++
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{
+		"total":   len(targetIDs),
+		"success": successCount,
+		"failed":  failedCount,
+		"errors":  errorItems,
 	})
 }
 
@@ -2037,7 +2203,7 @@ func (h *AccountHandler) BatchRefreshTier(c *gin.Context) {
 	accounts := make([]*service.Account, 0)
 
 	if len(req.AccountIDs) == 0 {
-		allAccounts, _, err := h.adminService.ListAccounts(ctx, 1, 10000, "gemini", "oauth", "", "", 0, "", "name", "asc")
+		allAccounts, _, err := h.adminService.ListAccounts(ctx, 1, 10000, "gemini", "oauth", "", "", "", 0, "", "name", "asc")
 		if err != nil {
 			response.ErrorFrom(c, err)
 			return

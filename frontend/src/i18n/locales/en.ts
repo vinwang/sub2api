@@ -2086,6 +2086,7 @@ export default {
       allPlatforms: 'All Platforms',
       allTypes: 'All Types',
       allStatus: 'All Status',
+      allStatusCodes: 'All Status Codes',
       allGroups: 'All Groups',
       ungroupedGroup: 'Ungrouped',
       oauthType: 'OAuth',
@@ -2333,6 +2334,9 @@ export default {
       failedToRefresh: 'Failed to refresh token',
       failedToDelete: 'Failed to delete account',
       failedToClearRateLimit: 'Failed to clear rate limit',
+      clearByStatusCodeAction: 'Clear {code}',
+      clearByStatusCodeConfirm: 'Clear account state for all currently filtered accounts with status code {code}?',
+      clearByStatusCodeSuccess: 'Cleared {count} account(s) with status code {code}',
       deleteConfirm: "Are you sure you want to delete '{name}'? This action cannot be undone.",
       // Create/Edit Account Modal
       platform: 'Platform',

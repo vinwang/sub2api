@@ -34,6 +34,7 @@ export async function list(
     platform?: string
     type?: string
     status?: string
+    status_code?: string
     group?: string
     search?: string
     privacy_mode?: string
@@ -69,6 +70,7 @@ export async function listWithEtag(
     platform?: string
     type?: string
     status?: string
+    status_code?: string
     group?: string
     search?: string
     privacy_mode?: string
@@ -504,6 +506,7 @@ export async function exportData(options?: {
     platform?: string
     type?: string
     status?: string
+    status_code?: string
     group?: string
     privacy_mode?: string
     search?: string
@@ -516,10 +519,11 @@ export async function exportData(options?: {
   if (options?.ids && options.ids.length > 0) {
     params.ids = options.ids.join(',')
   } else if (options?.filters) {
-    const { platform, type, status, group, privacy_mode, search, sort_by, sort_order } = options.filters
+    const { platform, type, status, status_code, group, privacy_mode, search, sort_by, sort_order } = options.filters
     if (platform) params.platform = platform
     if (type) params.type = type
     if (status) params.status = status
+    if (status_code) params.status_code = status_code
     if (group) params.group = group
     if (privacy_mode) params.privacy_mode = privacy_mode
     if (search) params.search = search
@@ -591,6 +595,18 @@ export interface BatchOperationResult {
   warnings?: Array<{ account_id: number; warning: string }>
 }
 
+export interface AccountStatusCodeFilters {
+  platform?: string
+  type?: string
+  status?: string
+  status_code?: string
+  group?: string
+  search?: string
+  privacy_mode?: string
+  sort_by?: string
+  sort_order?: 'asc' | 'desc'
+}
+
 /**
  * Batch clear account errors
  * @param accountIds - Array of account IDs
@@ -599,6 +615,23 @@ export interface BatchOperationResult {
 export async function batchClearError(accountIds: number[]): Promise<BatchOperationResult> {
   const { data } = await apiClient.post<BatchOperationResult>('/admin/accounts/batch-clear-error', {
     account_ids: accountIds
+  })
+  return data
+}
+
+/**
+ * Batch clear accounts by current status code
+ * @param statusCode - Current status code to clear
+ * @param filters - Optional filters to narrow matched accounts
+ * @returns Batch operation result
+ */
+export async function batchClearByStatusCode(
+  statusCode: number,
+  filters?: AccountStatusCodeFilters
+): Promise<BatchOperationResult> {
+  const { data } = await apiClient.post<BatchOperationResult>('/admin/accounts/batch-clear-by-status-code', {
+    status_code: statusCode,
+    filters
   })
   return data
 }
@@ -662,6 +695,7 @@ export const accountsAPI = {
   importData,
   getAntigravityDefaultModelMapping,
   batchClearError,
+  batchClearByStatusCode,
   batchRefresh,
   setPrivacy
 }

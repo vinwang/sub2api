@@ -18,6 +18,15 @@
             @create="showCreate = true"
           >
             <template #after>
+              <button
+                v-if="params.status_code"
+                @click="handleClearByStatusCode"
+                class="btn btn-secondary"
+                :title="t('admin.accounts.clearByStatusCodeAction', { code: params.status_code })"
+              >
+                <Icon name="shield" size="md" class="mr-1.5" />
+                <span class="hidden md:inline">{{ t('admin.accounts.clearByStatusCodeAction', { code: params.status_code }) }}</span>
+              </button>
               <!-- Auto Refresh Dropdown -->
               <div class="relative" ref="autoRefreshDropdownRef">
                 <button
@@ -346,6 +355,8 @@ import Icon from '@/components/icons/Icon.vue'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'
 import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
+import { resolveAccountStatusCode } from '@/utils/accountStatusCode'
+import { extractApiErrorMessage } from '@/utils/apiError'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import type { Account, AccountPlatform, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel } from '@/types'
 
@@ -637,6 +648,7 @@ const {
     platform: '',
     type: '',
     status: '',
+    status_code: '',
     privacy_mode: '',
     group: '',
     search: '',
@@ -840,6 +852,7 @@ const refreshAccountsIncrementally = async () => {
         platform?: string
         type?: string
         status?: string
+        status_code?: string
         privacy_mode?: string
         group?: string
         search?: string
@@ -1067,6 +1080,26 @@ const handleBulkRefreshToken = async () => {
     reload()
   } catch (error) {
     console.error('Failed to bulk refresh token:', error)
+    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.failedToRefresh')))
+  }
+}
+/**
+ * Clear all accounts matching the currently selected status code filter
+ */
+const handleClearByStatusCode = async () => {
+  const statusCode = Number.parseInt(String(params.status_code || '').trim(), 10)
+  if (!Number.isFinite(statusCode)) return
+  if (!confirm(t('admin.accounts.clearByStatusCodeConfirm', { code: statusCode }))) return
+  try {
+    const result = await adminAPI.accounts.batchClearByStatusCode(statusCode, buildAccountQueryFilters())
+    if (result.failed > 0) {
+      appStore.showError(t('admin.accounts.bulkActions.partialSuccess', { success: result.success, failed: result.failed }))
+    } else {
+      appStore.showSuccess(t('admin.accounts.clearByStatusCodeSuccess', { code: statusCode, count: result.success }))
+    }
+    await reload()
+  } catch (error) {
+    console.error('Failed to clear accounts by status code:', error)
     appStore.showError(String(error))
   }
 }
@@ -1180,6 +1213,7 @@ const buildAccountQueryFilters = () => ({
   platform: params.platform || '',
   type: params.type || '',
   status: params.status || '',
+  status_code: params.status_code || '',
   group: params.group || '',
   privacy_mode: params.privacy_mode || '',
   search: params.search || '',
@@ -1224,6 +1258,11 @@ const accountMatchesCurrentFilters = (account: Account) => {
     } else if (privacyMode !== filters.privacy_mode) {
       return false
     }
+  }
+  const statusCode = String(filters.status_code || '').trim()
+  if (statusCode) {
+    const currentStatusCode = resolveAccountStatusCode(account)
+    if (String(currentStatusCode || '') !== statusCode) return false
   }
   const search = String(filters.search || '').trim().toLowerCase()
   if (search && !account.name.toLowerCase().includes(search)) return false
@@ -1331,11 +1370,24 @@ const closeSchedulePanel = () => { showSchedulePanel.value = false; scheduleAcc.
 const handleReAuth = (a: Account) => { reAuthAcc.value = a; showReAuth.value = true }
 const handleRefresh = async (a: Account) => {
   try {
-    const updated = await adminAPI.accounts.refreshCredentials(a.id)
+    const updated = await adminAPI.accounts.refreshCredentials(a.id) as Account & {
+      warning?: string
+      message?: string
+    }
+    if (typeof updated.id !== 'number') {
+      if (updated.warning || updated.message) {
+        appStore.showWarning(updated.message || updated.warning)
+        await reload()
+        return
+      }
+      throw new Error(t('admin.accounts.failedToRefresh'))
+    }
     patchAccountInList(updated)
     enterAutoRefreshSilentWindow()
+    appStore.showSuccess(t('admin.accounts.tokenRefreshed'))
   } catch (error) {
     console.error('Failed to refresh credentials:', error)
+    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.failedToRefresh')))
   }
 }
 const handleRecoverState = async (a: Account) => {

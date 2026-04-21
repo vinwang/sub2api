@@ -1,7 +1,32 @@
 <template>
   <div class="flex items-center gap-2">
+    <!-- Error Display -->
+    <div v-if="hasError" class="flex items-center gap-1.5">
+      <span :class="['badge text-xs', statusClass]">
+        {{ statusText }}
+      </span>
+      <span v-if="currentStatusCode" class="inline-flex items-center gap-1 rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">
+        {{ currentStatusCode }}
+      </span>
+    </div>
+
+    <!-- Temp Unschedulable Display -->
+    <div v-else-if="isTempUnschedulable" class="flex items-center gap-1.5">
+      <button
+        type="button"
+        :class="['badge text-xs', statusClass, 'cursor-pointer']"
+        :title="t('admin.accounts.status.viewTempUnschedDetails')"
+        @click="handleTempUnschedClick"
+      >
+        {{ statusText }}
+      </button>
+      <span v-if="currentStatusCode" class="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+        {{ currentStatusCode }}
+      </span>
+    </div>
+
     <!-- Rate Limit Display (429) - Two-line layout -->
-    <div v-if="isRateLimited" class="flex flex-col items-center gap-1">
+    <div v-else-if="isRateLimited" class="flex flex-col items-center gap-1">
       <span class="badge text-xs badge-warning">{{ t('admin.accounts.status.rateLimited') }}</span>
       <span class="text-[11px] text-gray-400 dark:text-gray-500">{{ rateLimitResumeText }}</span>
     </div>
@@ -12,18 +37,9 @@
       <span class="text-[11px] text-gray-400 dark:text-gray-500">{{ overloadCountdown }}</span>
     </div>
 
-    <!-- Main Status Badge (shown when not rate limited/overloaded) -->
+    <!-- Main Status Badge (shown when not error/temp-unsched/rate-limited/overloaded) -->
     <template v-else>
-      <button
-        v-if="isTempUnschedulable"
-        type="button"
-        :class="['badge text-xs', statusClass, 'cursor-pointer']"
-        :title="t('admin.accounts.status.viewTempUnschedDetails')"
-        @click="handleTempUnschedClick"
-      >
-        {{ statusText }}
-      </button>
-      <span v-else :class="['badge text-xs', statusClass]">
+      <span :class="['badge text-xs', statusClass]">
         {{ statusText }}
       </span>
     </template>
@@ -160,6 +176,7 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import type { Account } from '@/types'
 import { formatCountdown, formatDateTime, formatCountdownWithSuffix, formatTime } from '@/utils/format'
+import { resolveAccountStatusCode } from '@/utils/accountStatusCode'
 
 const { t } = useI18n()
 
@@ -283,6 +300,8 @@ const isTempUnschedulable = computed(() => {
 const hasError = computed(() => {
   return props.account.status === 'error'
 })
+
+const currentStatusCode = computed(() => resolveAccountStatusCode(props.account))
 
 const isQuotaExceeded = computed(() => {
   const exceeded = (used?: number | null, limit?: number | null) =>
