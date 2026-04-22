@@ -1375,8 +1375,9 @@ const handleRefresh = async (a: Account) => {
       message?: string
     }
     if (typeof updated.id !== 'number') {
-      if (updated.warning || updated.message) {
-        appStore.showWarning(updated.message || updated.warning)
+      const warningMessage = updated.message ?? updated.warning
+      if (warningMessage) {
+        appStore.showWarning(warningMessage)
         await reload()
         return
       }
