@@ -1674,6 +1674,14 @@ func activeTempUnschedStatusCodePredicate(selector *entsql.Selector, statusCode 
 // errorMessageStatusCodePredicate matches structured status code markers persisted in account error messages.
 func errorMessageStatusCodePredicate(selector *entsql.Selector, statusCode string) *entsql.Predicate {
 	return entsql.Or(
+		entsql.ExprP(
+			`CASE
+				WHEN error_message ILIKE '%token refresh failed: status %'
+				THEN error_message ILIKE ?
+				ELSE FALSE
+			END`,
+			"%token refresh failed: status "+statusCode+"%",
+		),
 		entsql.ExprP("error_message LIKE ?", "%("+statusCode+")%"),
 		entsql.ExprP("error_message LIKE ?", "% "+statusCode+":%"),
 		entsql.ExprP("error_message LIKE ?", "%returned "+statusCode+"%"),

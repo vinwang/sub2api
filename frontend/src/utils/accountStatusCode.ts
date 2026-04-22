@@ -1,6 +1,7 @@
 import type { Account } from '@/types'
 
 const STATUS_CODE_PATTERN = /\((\d{3})\)|returned\s+(\d{3})|(?:^|\s)(\d{3}):/i
+const TOKEN_REFRESH_STATUS_PATTERN = /token refresh failed:\s*status\s*(\d{3})/i
 
 /**
  * Parse a status code from an account error message
@@ -9,6 +10,11 @@ const STATUS_CODE_PATTERN = /\((\d{3})\)|returned\s+(\d{3})|(?:^|\s)(\d{3}):/i
  */
 export const parseStatusCodeFromErrorMessage = (errorMessage: string | null | undefined): number | null => {
   if (!errorMessage) return null
+  const refreshStatusMatch = errorMessage.match(TOKEN_REFRESH_STATUS_PATTERN)
+  if (refreshStatusMatch?.[1]) {
+    const refreshStatusCode = Number.parseInt(refreshStatusMatch[1], 10)
+    return Number.isFinite(refreshStatusCode) ? refreshStatusCode : null
+  }
   const match = errorMessage.match(STATUS_CODE_PATTERN)
   if (!match) return null
 
