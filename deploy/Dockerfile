@@ -18,6 +18,7 @@ ARG NODE_MAX_OLD_SPACE_SIZE=4096
 # -----------------------------------------------------------------------------
 FROM ${NODE_IMAGE} AS frontend-builder
 
+ARG NODE_MAX_OLD_SPACE_SIZE
 WORKDIR /app/frontend
 ENV NODE_OPTIONS=--max-old-space-size=${NODE_MAX_OLD_SPACE_SIZE}
 
